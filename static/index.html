@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DDoS Shield: live detection and mitigation lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,500..900&family=Source+Sans+3:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#E8EDF2;
+  --panel:#FFFFFF;
+  --ink:#14213D;
+  --muted:#5A6A80;
+  --line:#CCD6E1;
+  --legit:#2F7BF6;
+  --attack:#E5383B;
+  --ok:#14915F;
+  --warn:#C98200;
+  --stage:#0E1A2E;
+  --stage-2:#16263F;
+  --display:"Archivo","Arial Narrow",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--paper);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.45;-webkit-font-smoothing:antialiased}
+button{font:inherit;cursor:pointer}
+:focus-visible{outline:3px solid var(--legit);outline-offset:2px}
+.wrap{max-width:1360px;margin:0 auto;padding:20px 24px 40px}
+
+/* ---------- header ---------- */
+.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px 32px;margin-bottom:16px}
+h1{font-family:var(--display);font-stretch:112%;font-weight:800;font-size:clamp(26px,3.2vw,38px);line-height:1.05;margin:0;letter-spacing:-.01em}
+.sub{margin:6px 0 0;color:var(--muted);max-width:56ch}
+.controls{display:flex;flex-wrap:wrap;align-items:center;gap:12px 18px}
+.btn-attack{background:var(--attack);color:#fff;border:0;border-radius:10px;padding:0 24px;min-height:52px;font-family:var(--display);font-stretch:110%;font-weight:800;font-size:18px;letter-spacing:.01em;box-shadow:0 3px 0 #A5171A;transition:transform .08s,box-shadow .08s,background .2s}
+.btn-attack:hover{background:#D12C2F}
+.btn-attack:active{transform:translateY(2px);box-shadow:0 1px 0 #A5171A}
+.btn-attack.stop{background:var(--panel);color:var(--attack);box-shadow:inset 0 0 0 2px var(--attack)}
+.btn-attack[disabled]{background:#9AA7B6;box-shadow:0 3px 0 #7D8B9C;cursor:not-allowed;color:#fff}
+.seg{display:inline-flex;border:1.5px solid var(--line);border-radius:10px;background:var(--panel);overflow:hidden}
+.seg button{border:0;background:transparent;padding:6px 14px;min-height:44px;color:var(--muted);font-weight:600;line-height:1.15;text-align:left}
+.seg button small{display:block;font-weight:400;font-size:12px}
+.seg button+button{border-left:1.5px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--ink);color:#fff}
+.seg button[disabled]{opacity:.5;cursor:not-allowed}
+.toggle{display:flex;align-items:center;gap:10px;min-height:44px;background:none;border:0;padding:0;color:var(--ink);text-align:left}
+.toggle .track{width:44px;height:26px;border-radius:13px;background:#9AA7B6;position:relative;transition:background .2s;flex:none}
+.toggle .track::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .2s}
+.toggle[aria-checked="true"] .track{background:var(--ok)}
+.toggle[aria-checked="true"] .track::after{transform:translateX(18px)}
+.toggle span.t{font-weight:600;line-height:1.15}
+.toggle span.t small{display:block;font-weight:400;font-size:12px;color:var(--muted)}
+.btn-ghost{background:none;border:1.5px solid var(--line);border-radius:10px;min-height:44px;padding:0 16px;color:var(--ink);font-weight:600}
+.btn-ghost:hover{border-color:var(--ink)}
+
+/* ---------- stepper ---------- */
+.steps{list-style:none;margin:0 0 16px;padding:0;display:grid;grid-template-columns:repeat(5,1fr);gap:0;counter-reset:s}
+.steps li{position:relative;padding:10px 12px 10px 44px;border-top:4px solid var(--line);font-weight:600;color:var(--muted);transition:color .25s,border-color .25s;min-height:62px}
+.steps li::before{counter-increment:s;content:counter(s);position:absolute;left:10px;top:9px;width:26px;height:26px;border-radius:50%;border:2px solid var(--line);display:grid;place-items:center;font-family:var(--display);font-size:13px;font-weight:800;background:var(--paper);transition:all .25s}
+.steps li small{display:block;font-weight:400;font-size:13px;line-height:1.3}
+.steps li.done{color:var(--ink);border-top-color:var(--ink)}
+.steps li.done::before{background:var(--ink);border-color:var(--ink);color:#fff}
+.steps li.now{color:var(--ink);border-top-color:var(--legit)}
+.steps li.now::before{border-color:var(--legit);color:var(--legit)}
+.steps li.now.bad{border-top-color:var(--attack)}
+.steps li.now.bad::before{border-color:var(--attack);color:var(--attack)}
+.steps li.now.good{border-top-color:var(--ok)}
+.steps li.now.good::before{border-color:var(--ok);color:var(--ok)}
+.steps li.now.warn{border-top-color:var(--warn)}
+.steps li.now.warn::before{border-color:var(--warn);color:var(--warn)}
+
+/* ---------- layout ---------- */
+.grid{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:18px;align-items:start}
+.stack{display:grid;gap:18px}
+.card{background:var(--panel);border-radius:14px;padding:16px 18px;border:1px solid var(--line)}
+.card h2{font-family:var(--display);font-stretch:105%;font-weight:700;font-size:17px;margin:0 0 10px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.chip{display:inline-block;font-family:var(--body);font-size:12.5px;font-weight:600;padding:2px 10px;border-radius:99px;background:#E4EAF1;color:var(--muted);white-space:nowrap}
+.chip.ok{background:#D7F1E6;color:#0B6B45}
+.chip.warn{background:#FBEBC8;color:#8A5A00}
+.chip.bad{background:#FCDCDD;color:#A5171A}
+.chip.dark{background:#2A3A55;color:#E8EEF7}
+
+/* ---------- stage ---------- */
+.stage{position:relative;background:var(--stage);border-radius:16px;overflow:hidden;box-shadow:0 0 0 1px #0A1220,0 14px 40px -18px rgba(14,26,46,.8);transition:box-shadow .4s}
+.stage.hot{box-shadow:0 0 0 2px var(--attack),0 0 60px -6px rgba(229,56,59,.55)}
+.stage.safe{box-shadow:0 0 0 2px #2FC98A,0 0 50px -10px rgba(47,201,138,.45)}
+.stage canvas{display:block;width:100%;height:auto;aspect-ratio:960/520}
+.cwrap{overflow-x:auto}
+.hud{position:absolute;left:22px;top:18px;color:#fff;pointer-events:none}
+.hud .lab{font-size:14px;color:#9FB2CC;font-weight:600}
+.hud .big{font-family:var(--display);font-stretch:118%;font-weight:900;font-size:clamp(44px,7vw,88px);line-height:.95;letter-spacing:-.02em;font-variant-numeric:tabular-nums;transition:color .3s}
+.hud .big.attack{color:#FF6B6E}
+.hud .big.safe{color:#5CE0A5}
+.hud .break{margin-top:6px;font-size:14px;color:#B8C7DC;display:flex;flex-wrap:wrap;gap:4px 16px;font-variant-numeric:tabular-nums}
+.hud .break b{color:#fff;font-weight:600}
+.legend{position:absolute;right:18px;top:16px;display:grid;gap:4px;color:#9FB2CC;font-size:13px;pointer-events:none;text-align:left}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:-1px}
+.banner{position:absolute;left:50%;bottom:16px;transform:translate(-50%,140%);max-width:min(600px,86%);padding:10px 18px;border-radius:12px;color:#fff;font-weight:600;font-size:15px;line-height:1.3;text-align:center;opacity:0;transition:transform .45s cubic-bezier(.2,.9,.3,1.2),opacity .3s,background .3s;pointer-events:none}
+.banner.show{transform:translate(-50%,0);opacity:1}
+.banner b{display:block;font-family:var(--display);font-stretch:112%;font-weight:800;font-size:19px}
+.banner.bad{background:var(--attack)}
+.banner.warn{background:#D99100}
+.banner.good{background:#14915F}
+.banner.dead{background:#3A0D10;box-shadow:0 0 0 2px var(--attack)}
+.banner.pulse{animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{50%{filter:brightness(1.25)}}
+.lost{position:absolute;inset:0;background:rgba(14,26,46,.88);color:#fff;display:none;place-items:center;text-align:center;padding:24px;font-weight:600}
+.lost.show{display:grid}
+
+/* ---------- chart + log ---------- */
+.below{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);gap:18px;margin-top:18px}
+.chartbox canvas{display:block;width:100%;height:260px}
+.chartkey{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:13px;color:var(--muted);margin-top:6px}
+.chartkey i{display:inline-block;width:18px;height:3px;border-radius:2px;margin-right:6px;vertical-align:3px}
+.log{list-style:none;margin:0;padding:0;max-height:292px;overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.4}
+.log li{display:grid;grid-template-columns:46px 1fr;gap:8px;padding:6px 0;border-top:1px solid #E3E9F0}
+.log li:first-child{border-top:0}
+.log .tm{color:var(--muted)}
+.log .info .m{color:var(--ink)}
+.log .warn .m{color:#8A5A00}
+.log .crit .m{color:#B3181B;font-weight:500}
+.log .ok .m{color:#0B6B45;font-weight:500}
+
+/* ---------- right column ---------- */
+.prob{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.prob .v{font-family:var(--display);font-stretch:115%;font-weight:900;font-size:44px;line-height:1;font-variant-numeric:tabular-nums}
+.prob .l{color:var(--muted);font-size:14px;max-width:16ch;line-height:1.25;text-align:right}
+.meter{position:relative;height:12px;border-radius:6px;background:#E4EAF1;margin:10px 0 4px;overflow:visible}
+.meter .fill{position:absolute;left:0;top:0;bottom:0;border-radius:6px;background:var(--legit);transition:width .4s,background .3s}
+.meter .mark{position:absolute;top:-5px;bottom:-5px;width:2px;background:var(--ink)}
+.meter-cap{display:flex;justify-content:space-between;font-size:12px;color:var(--muted)}
+.checks{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:6px;font-size:14.5px}
+.checks li{display:flex;align-items:center;gap:10px}
+.checks .dot{width:18px;height:18px;border-radius:50%;border:2px solid var(--line);flex:none;display:grid;place-items:center;font-size:11px;font-weight:800;color:#fff;transition:all .25s}
+.checks li.on .dot{background:var(--attack);border-color:var(--attack)}
+.verdict{margin-top:12px;padding:8px 12px;border-radius:10px;font-weight:700;font-family:var(--display);font-stretch:105%;background:#E4EAF1;color:var(--muted);transition:all .25s}
+.verdict.bad{background:var(--attack);color:#fff}
+.verdict.ok{background:#D7F1E6;color:#0B6B45}
+details.feat{margin-top:12px;border-top:1px solid #E3E9F0;padding-top:8px}
+details.feat summary{cursor:pointer;font-weight:600;color:var(--muted);min-height:32px;display:flex;align-items:center}
+.feat dl{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;margin:6px 0 0;font-size:13px}
+.feat dt{font-family:var(--mono);color:var(--muted)}
+.feat dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+.bars{display:grid;gap:11px}
+.bar .row{display:flex;justify-content:space-between;font-size:14px;margin-bottom:3px}
+.bar .row b{font-variant-numeric:tabular-nums}
+.bar .tr{height:8px;border-radius:4px;background:#E4EAF1;overflow:hidden}
+.bar .tr i{display:block;height:100%;width:0;border-radius:4px;background:var(--ok);transition:width .4s,background .3s}
+.stagelist{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.stagelist li{display:grid;grid-template-columns:26px 1fr auto;gap:10px;align-items:start}
+.stagelist .ic{width:24px;height:24px;border-radius:50%;border:2px solid var(--line);display:grid;place-items:center;color:#fff;font-size:12px;font-weight:800;transition:all .3s;margin-top:1px}
+.stagelist li.on .ic{background:var(--ok);border-color:var(--ok)}
+.stagelist li.on.fresh .ic{animation:pop .5s}
+@keyframes pop{40%{transform:scale(1.35)}}
+.stagelist .n{font-weight:600;line-height:1.2}
+.stagelist .d{font-size:13px;color:var(--muted);line-height:1.3}
+.stagelist li:not(.on) .n{color:var(--muted)}
+.stagelist .st{font-size:12.5px;font-weight:600;color:var(--muted);padding-top:2px}
+.stagelist li.on .st{color:var(--ok)}
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px;padding-top:12px;border-top:1px solid #E3E9F0}
+.kpis div{font-size:13px;color:var(--muted);line-height:1.25}
+.kpis b{display:block;font-family:var(--display);font-stretch:110%;font-weight:800;font-size:22px;color:var(--ink);font-variant-numeric:tabular-nums}
+.foot{margin-top:22px;color:var(--muted);font-size:13.5px;max-width:90ch}
+
+@media (max-width:1060px){
+  .grid{grid-template-columns:1fr}
+  .below{grid-template-columns:1fr}
+  .steps{grid-template-columns:1fr 1fr}
+}
+@media (max-width:560px){
+  .wrap{padding:14px 12px 30px}
+  .steps{grid-template-columns:1fr}
+  .banner{max-width:92%;font-size:13px}
+  .banner b{font-size:15px}
+  .stage{display:flex;flex-direction:column}
+  .hud{position:static;order:0;padding:14px 14px 0}
+  .cwrap{order:1}
+  .stage canvas{min-width:720px}
+  .banner{position:static;order:2;transform:none;max-width:none;margin:0 12px 12px;display:none;opacity:1;transition:none}
+  .banner.show{display:block}
+  .legend{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  .banner,.stagelist .ic,.meter .fill,.bar .tr i{transition:none}
+  .banner.pulse,.stagelist li.on.fresh .ic{animation:none}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div>
+      <h1>DDoS Shield</h1>
+      <p class="sub">Real users are browsing a server. Press the red button to flood it, then watch the ML model spot the attack and the network defend itself.</p>
+    </div>
+    <div class="controls">
+      <div class="seg" role="group" aria-label="Attack strength" id="intensity">
+        <button data-i="low" aria-pressed="false">Low<small>5,000 req/s</small></button>
+        <button data-i="medium" aria-pressed="true">Medium<small>9,000 req/s</small></button>
+        <button data-i="high" aria-pressed="false">High<small>18,000 req/s</small></button>
+      </div>
+      <button class="toggle" id="mitig" role="switch" aria-checked="true">
+        <span class="track"></span>
+        <span class="t">Auto-mitigation<small>Switch off to see an unprotected server</small></span>
+      </button>
+      <button class="btn-attack" id="go">Launch DDoS attack</button>
+      <button class="btn-ghost" id="reset">Reset</button>
+    </div>
+  </header>
+
+  <ol class="steps" id="steps" aria-label="Demo progress">
+    <li><span>Normal traffic</span><small>Users browse, server is calm</small></li>
+    <li><span>Attack ramps up</span><small>A botnet floods the server</small></li>
+    <li><span>ML detects it</span><small>Random Forest flags the traffic</small></li>
+    <li><span>Defences engage</span><small>Controller rewrites switch rules</small></li>
+    <li><span>Server stays online</span><small>Real users keep getting served</small></li>
+  </ol>
+
+  <div class="grid">
+    <div>
+      <section class="stage" id="stage" aria-label="Live network view">
+        <div class="cwrap"><canvas id="net" width="1920" height="1040"></canvas></div>
+        <div class="hud">
+          <div class="lab">Requests per second hitting the network</div>
+          <div class="big" id="bigNum">0</div>
+          <div class="break">
+            <span>Real users <b id="nLegit">0</b></span>
+            <span>Attack <b id="nAtk">0</b></span>
+            <span>Reaching server <b id="nDel">0</b></span>
+          </div>
+        </div>
+        <div class="banner" id="banner" role="status" aria-live="polite"></div>
+        <div class="legend"><span><i style="background:#4DA3FF"></i>Real user request</span><span><i style="background:#FF4B4B"></i>Attack request</span><span><i style="background:#3DDC97"></i>Controller command</span></div>
+        <div class="lost" id="lost">Lost contact with the simulation server. Check that <code>&nbsp;python3 app.py&nbsp;</code> is still running.</div>
+      </section>
+
+      <div class="below">
+        <section class="card chartbox">
+          <h2>Traffic over the last 80 seconds <span class="chip dark">log scale</span></h2>
+          <canvas id="chart" width="1000" height="520"></canvas>
+          <div class="chartkey">
+            <span><i style="background:#E5383B"></i>Arriving at the switch</span>
+            <span><i style="background:#2F7BF6"></i>Allowed through to the server</span>
+            <span><i style="background:#C98200"></i>Server capacity</span>
+            <span><i style="background:#14213D"></i>ML attack probability</span>
+          </div>
+        </section>
+        <section class="card">
+          <h2>What the system is doing</h2>
+          <ul class="log" id="log"></ul>
+        </section>
+      </div>
+    </div>
+
+    <aside class="stack">
+      <section class="card">
+        <h2>ML detector <span class="chip dark" id="mlChip">Random Forest</span></h2>
+        <div class="prob"><div class="v" id="pVal">0%</div><div class="l">chance this traffic is a DDoS attack</div></div>
+        <div class="meter" aria-hidden="true"><div class="fill" id="pFill" style="width:0"></div><div class="mark" style="left:50%"></div></div>
+        <div class="meter-cap"><span>0%</span><span>alert threshold 50%</span><span>100%</span></div>
+        <ul class="checks">
+          <li id="chk1"><span class="dot"></span><span id="chk1t">Model says attack: 0 of last 3 readings</span></li>
+          <li id="chk2"><span class="dot"></span><span id="chk2t">Traffic is 1.0× normal (needs 2.5×)</span></li>
+        </ul>
+        <div class="verdict" id="verdict">Traffic looks normal</div>
+        <details class="feat">
+          <summary>What the model is looking at</summary>
+          <dl id="feat"></dl>
+        </details>
+      </section>
+
+      <section class="card">
+        <h2>Web server <span class="chip ok" id="srvChip">Online</span></h2>
+        <div class="bars">
+          <div class="bar"><div class="row"><span>CPU load</span><b id="cpuV">0%</b></div><div class="tr"><i id="cpuB"></i></div></div>
+          <div class="bar"><div class="row"><span>Connection queue</span><b id="qV">0%</b></div><div class="tr"><i id="qB"></i></div></div>
+          <div class="bar"><div class="row"><span>Real users served</span><b id="okV">100%</b></div><div class="tr"><i id="okB"></i></div></div>
+          <div class="bar"><div class="row"><span>Response time</span><b id="latV">40 ms</b></div><div class="tr"><i id="latB"></i></div></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Defences <span class="chip" id="defChip">Standing by</span></h2>
+        <ul class="stagelist" id="stagelist"></ul>
+        <div class="kpis">
+          <div><b id="kBlocked">0 / 600</b>attacking sources blocked</div>
+          <div><b id="kDropped">0</b>attack requests dropped</div>
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <p class="foot">Everything on this page is simulated: no real packets leave your machine. The attack-or-normal verdict comes from your trained <code>ddos_model.pkl</code>, fed with traffic statistics the simulator produces. The mitigation steps mirror what the Ryu controller would push to an OpenFlow switch.</p>
+</div>
+
+<script>
+(() => {
+"use strict";
+const $ = id => document.getElementById(id);
+const fmt = n => Math.round(n).toLocaleString("en-US");
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const clamp = (v,a,b) => Math.min(b,Math.max(a,v));
+
+/* ======================================================= state + polling */
+let S = null;            // latest server snapshot
+let intensity = "medium";
+let lastSeq = -1, lastStages = [false,false,false], lastAlert = false, lostCount = 0;
+const disp = {total:0, legit:0, atk:0, del:0};   // smoothed numbers for the HUD
+
+async function poll(){
+  try{
+    const r = await fetch("/api/state",{cache:"no-store"});
+    S = await r.json();
+    lostCount = 0; $("lost").classList.remove("show");
+    onState();
+  }catch(e){
+    if(++lostCount > 3) $("lost").classList.add("show");
+  }
+}
+setInterval(poll, 400); poll();
+
+async function post(url, body){
+  try{ await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})}); }catch(e){}
+  poll();
+}
+
+/* ============================================================== controls */
+$("go").addEventListener("click", () => {
+  if(!S) return;
+  post("/api/attack", S.attack_on ? {action:"stop"} : {action:"start", intensity});
+});
+$("reset").addEventListener("click", () => { particles.length = 0; sparks.length = 0; post("/api/reset"); });
+$("mitig").addEventListener("click", () => {
+  const on = $("mitig").getAttribute("aria-checked") !== "true";
+  post("/api/mitigation", {on});
+});
+document.querySelectorAll("#intensity button").forEach(b => b.addEventListener("click", () => {
+  intensity = b.dataset.i;
+  document.querySelectorAll("#intensity button").forEach(x => x.setAttribute("aria-pressed", x === b));
+}));
+
+/* ======================================================= DOM-side render */
+const STEP_LABELS = ["Normal traffic","Attack ramps up","ML detects it","Defences engage","Server stays online"];
+const stepEls = [...$("steps").children];
+
+function phaseToStep(p){
+  return {normal:0, attacking:1, detected:2, mitigating:3, protected:4, recovering:4, crashed:4}[p];
+}
+
+function onState(){
+  const s = S, t = s.traffic, sv = s.server, ml = s.ml, ph = s.phase;
+
+  /* stepper */
+  const cur = phaseToStep(ph);
+  stepEls.forEach((el,i) => {
+    el.className = i < cur ? "done" : (i === cur ? "now" : "");
+    if(i === cur){
+      if(ph === "attacking") el.classList.add("bad");
+      else if(ph === "detected") el.classList.add(s.auto_mitigation ? "warn" : "bad");
+      else if(ph === "mitigating") el.classList.add("warn");
+      else if(ph === "protected" || ph === "recovering") el.classList.add("good");
+      else if(ph === "crashed") el.classList.add("bad");
+    }
+  });
+  stepEls[4].querySelector("span").textContent = ph === "crashed" ? "Server went down" : (ph === "recovering" ? "Recovered" : STEP_LABELS[4]);
+  stepEls[4].querySelector("small").textContent = ph === "crashed" ? "No defence was active" : "Real users keep getting served";
+  if(ph === "crashed"){ stepEls.forEach((el,i)=>{ if(i<4 && i>=2 && !s.auto_mitigation){ el.className = i===3 ? "" : "done"; } }); }
+
+  /* controls */
+  const go = $("go");
+  if(ph === "crashed"){ go.textContent = "Server is down"; go.disabled = true; go.className = "btn-attack"; }
+  else if(s.attack_on){ go.textContent = "Stop attack"; go.disabled = false; go.className = "btn-attack stop"; }
+  else if(s.traffic.attack > 0 || ph === "recovering"){ go.textContent = "Launch DDoS attack"; go.disabled = ph === "recovering"; go.className = "btn-attack"; }
+  else { go.textContent = "Launch DDoS attack"; go.disabled = false; go.className = "btn-attack"; }
+  document.querySelectorAll("#intensity button").forEach(b => b.disabled = s.attack_on);
+  $("mitig").setAttribute("aria-checked", s.auto_mitigation);
+
+  /* stage glow + banner */
+  const stage = $("stage");
+  stage.classList.toggle("hot", ph === "attacking" || ph === "detected" || ph === "crashed");
+  stage.classList.toggle("safe", ph === "protected" || ph === "mitigating");
+  setBanner(s);
+
+  /* ML panel */
+  const p = ml.p_attack;
+  $("pVal").textContent = Math.round(p*100) + "%";
+  const fill = $("pFill"); fill.style.width = (p*100) + "%";
+  fill.style.background = p >= ml.threshold ? "var(--attack)" : (p > .25 ? "#D99100" : "var(--legit)");
+  $("pVal").style.color = p >= ml.threshold ? "var(--attack)" : "var(--ink)";
+  $("chk1").classList.toggle("on", ml.votes >= ml.confirm);
+  $("chk1t").textContent = "Model says attack: " + ml.votes + " of last 3 readings (needs " + ml.confirm + ")";
+  $("chk2").classList.toggle("on", ml.ratio >= ml.rate_guard);
+  $("chk2t").textContent = "Traffic is " + (ml.ratio >= 10 ? fmt(ml.ratio) : ml.ratio.toFixed(1)) + "× normal (needs " + ml.rate_guard + "×)";
+  document.querySelectorAll(".checks .dot").forEach(d => d.textContent = d.parentElement.classList.contains("on") ? "✓" : "");
+  const v = $("verdict");
+  if(ml.alert){ v.className = "verdict bad"; v.textContent = "DDoS attack detected"; }
+  else if(ph === "normal"){ v.className = "verdict ok"; v.textContent = "Traffic looks normal"; }
+  else { v.className = "verdict"; v.textContent = "Checking the traffic pattern…"; }
+  const chip = $("mlChip");
+  chip.textContent = ml.loaded ? "Random Forest · loaded" : "Model missing · rule fallback";
+  chip.className = "chip " + (ml.loaded ? "dark" : "warn");
+  renderFeatures(ml.features);
+
+  /* server panel */
+  const bad = sv.status === "down" || sv.status === "overloaded";
+  const sc = $("srvChip");
+  sc.textContent = {online:"Online",degraded:"Degraded",overloaded:"Overloaded",down:"Down"}[sv.status];
+  sc.className = "chip " + ({online:"ok",degraded:"warn",overloaded:"bad",down:"bad"}[sv.status]);
+  setBar("cpuV","cpuB", sv.cpu, sv.cpu.toFixed(0)+"%", sv.cpu>85?"bad":sv.cpu>65?"warn":"ok");
+  setBar("qV","qB", sv.backlog_pct, sv.backlog_pct.toFixed(0)+"%", sv.backlog_pct>70?"bad":sv.backlog_pct>35?"warn":"ok");
+  setBar("okV","okB", sv.success, sv.success.toFixed(0)+"%", sv.success<60?"bad":sv.success<92?"warn":"ok");
+  setBar("latV","latB", clamp(sv.latency/1500*100,0,100), sv.status==="down" ? "no reply" : fmt(sv.latency)+" ms", sv.latency>600?"bad":sv.latency>150?"warn":"ok");
+
+  /* defences */
+  renderStages(s);
+  $("kBlocked").textContent = fmt(t.blocked_ips) + " / " + fmt(t.bots);
+  $("kDropped").textContent = fmt(t.dropped_total);
+  const dc = $("defChip");
+  if(!s.auto_mitigation){ dc.textContent = "Switched off"; dc.className = "chip bad"; }
+  else if(ph === "mitigating" || ph === "detected" && s.mitigation.stages[0].active){ dc.textContent = "Deploying"; dc.className = "chip warn"; }
+  else if(ph === "protected"){ dc.textContent = "Holding"; dc.className = "chip ok"; }
+  else if(ph === "recovering"){ dc.textContent = "Standing down"; dc.className = "chip ok"; }
+  else { dc.textContent = "Standing by"; dc.className = "chip"; }
+
+  /* stage-change events for the animation */
+  s.mitigation.stages.forEach((st,i) => { if(st.active && !lastStages[i]) commandPulse(i); lastStages[i] = st.active; });
+  if(ml.alert && !lastAlert) alertPulse();
+  lastAlert = ml.alert;
+
+  renderLog(s.logs);
+  drawChart();
+}
+
+function setBar(vId,bId,pct,label,tone){
+  $(vId).textContent = label;
+  const b = $(bId); b.style.width = clamp(pct,0,100) + "%";
+  b.style.background = tone === "bad" ? "var(--attack)" : tone === "warn" ? "#D99100" : "var(--ok)";
+}
+
+let lastFeatKey = "";
+function renderFeatures(f){
+  const key = JSON.stringify(f); if(key === lastFeatKey) return; lastFeatKey = key;
+  const rows = [["pktcount",fmt(f.pktcount)],["bytecount",fmt(f.bytecount)],["byteperflow",fmt(f.byteperflow)],["flows",f.flows],["tot_kbps",fmt(f.tot_kbps)],["protocol","TCP"]];
+  $("feat").innerHTML = rows.map(r => "<dt>"+r[0]+"</dt><dd>"+r[1]+"</dd>").join("");
+}
+
+function renderStages(s){
+  const ul = $("stagelist");
+  if(!ul.children.length){
+    ul.innerHTML = s.mitigation.stages.map(st => '<li data-id="'+st.id+'"><span class="ic"></span><div><div class="n">'+st.name+'</div><div class="d">'+st.detail+'</div></div><span class="st"></span></li>').join("");
+  }
+  s.mitigation.stages.forEach((st,i) => {
+    const li = ul.children[i], was = li.classList.contains("on");
+    li.classList.toggle("on", st.active);
+    if(st.active && !was){ li.classList.add("fresh"); setTimeout(()=>li.classList.remove("fresh"),700); }
+    li.querySelector(".ic").textContent = st.active ? "✓" : "";
+    li.querySelector(".st").textContent = st.active ? "On" : (s.auto_mitigation ? "Waiting" : "Off");
+  });
+}
+
+function setBanner(s){
+  const b = $("banner"), ph = s.phase, ml = s.ml;
+  let cls = "", html = "";
+  if(ph === "crashed"){ cls = "dead"; html = "<b>Server crashed</b>The connection queue overflowed. Press Reset to try again with auto-mitigation on."; }
+  else if(ph === "attacking"){ cls = "bad"; html = "<b>Traffic is surging</b>The detector is checking whether this is an attack…"; }
+  else if(ph === "detected"){ cls = s.auto_mitigation ? "bad pulse" : "bad pulse"; html = s.auto_mitigation ? "<b>DDoS attack detected</b>ML model confidence " + Math.round(ml.p_attack*100) + "%. Controller is deploying defences." : "<b>DDoS attack detected</b>Auto-mitigation is off, so nothing is stopping the flood."; }
+  else if(ph === "mitigating"){ cls = "warn"; const n = s.mitigation.stages.filter(x=>x.active).length; html = "<b>Mitigation in progress</b>Defence step " + n + " of 3 is live. " + fmt(s.traffic.blocked_ips) + " sources blocked."; }
+  else if(ph === "protected"){ cls = "good"; html = "<b>Attack contained</b>Server stable. " + Math.round(s.server.success) + "% of real users are still being served."; }
+  else if(ph === "recovering"){ cls = "good"; html = "<b>Attack over</b>Confirming traffic is normal before lifting the blocks."; }
+  b.className = "banner" + (cls ? " show " + cls : "");
+  if(html && b.dataset.h !== html){ b.innerHTML = html; b.dataset.h = html; }
+}
+
+function renderLog(logs){
+  const last = logs.length ? logs[logs.length-1].seq : 0;
+  if(last === lastSeq) return; lastSeq = last;
+  const mm = t => { const m = Math.floor(t/60), s = Math.floor(t%60); return String(m).padStart(2,"0")+":"+String(s).padStart(2,"0"); };
+  $("log").innerHTML = logs.slice().reverse().map(l => '<li class="'+l.level+'"><span class="tm">'+mm(l.t)+'</span><span class="m">'+l.msg.replace(/</g,"&lt;")+'</span></li>').join("");
+}
+
+/* ===================================================== network stage anim */
+const net = $("net"), nctx = net.getContext("2d");
+const W = 960, H = 520;
+const N = {
+  users: [], bots: [],
+  sw:   {x:540, y:300, w:112, h:112},
+  ctl:  {x:540, y:96, w:244, h:70},
+  gate: {x:650},
+  srv:  {x:858, y:300, w:116, h:190},
+};
+for(let i=0;i<8;i++){ N.users.push({x:70+(i%4)*34, y:372+Math.floor(i/4)*40}); }
+for(let r=0;r<6;r++) for(let c=0;c<8;c++) N.bots.push({x:56+c*17, y:226+r*17, ph:Math.random()*6.28});
+const SRC_USER = {x:200, y:410}, SRC_BOT = {x:200, y:272};
+const SW_IN_USER = {x:484, y:322}, SW_IN_BOT = {x:484, y:282};
+const SRV_IN = {x:798, y:300};
+
+const particles = [], sparks = [], pulses = [];
+let spawnL = 0, spawnA = 0, lastT = performance.now(), shake = 0;
+
+function pathFor(kind){
+  return kind === "legit" ? [SRC_USER, SW_IN_USER, {x:N.gate.x, y:310}, SRV_IN] : [SRC_BOT, SW_IN_BOT, {x:N.gate.x, y:290}, SRV_IN];
+}
+function plen(pts){ let L=0; for(let i=1;i<pts.length;i++) L+=Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y); return L; }
+
+function spawn(kind, block){
+  const pts = pathFor(kind), start = kind === "legit" ? N.users[Math.floor(Math.random()*8)] : N.bots[Math.floor(Math.random()*48)];
+  const p = [{x:start.x, y:start.y}, ...pts];
+  const L = plen(p);
+  // arrival distance at gate
+  let gateD = 0; for(let i=1;i<=3;i++) gateD += Math.hypot(p[i].x-p[i-1].x, p[i].y-p[i-1].y);
+  particles.push({kind, pts:p, d:0, L, gateD, block, spd:(kind==="legit"?260:330)+Math.random()*80, jy:(Math.random()-.5)*14});
+}
+function pointAt(p){
+  let d = p.d;
+  for(let i=1;i<p.pts.length;i++){
+    const a = p.pts[i-1], b = p.pts[i], seg = Math.hypot(b.x-a.x,b.y-a.y);
+    if(d <= seg){ const t = d/seg; return {x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t}; }
+    d -= seg;
+  }
+  const e = p.pts[p.pts.length-1]; return {x:e.x,y:e.y};
+}
+function commandPulse(i){ for(let k=0;k<5;k++) pulses.push({dir:"down", t:-k*.12, kind:"cmd"}); }
+function alertPulse(){ for(let k=0;k<6;k++) pulses.push({dir:"up", t:-k*.08, kind:"alert"}); }
+
+let statsClock = 0;
+
+function frame(now){
+  const dt = Math.min(.05, (now-lastT)/1000); lastT = now;
+  if(S){
+    const t = S.traffic;
+    // smooth HUD numbers
+    const k = 1 - Math.pow(.0005, dt);
+    for(const key of ["total","legit","atk","del"]){
+      const target = key==="total"?t.total : key==="legit"?t.legit : key==="atk"?t.attack : t.delivered;
+      disp[key] += (target - disp[key]) * k;
+      if(Math.abs(target-disp[key]) < .6) disp[key] = target;
+    }
+    $("bigNum").textContent = fmt(disp.total);
+    $("bigNum").className = "big" + (S.phase==="protected"||S.phase==="mitigating" ? " safe" : (t.attack>200 ? " attack" : ""));
+    $("nLegit").textContent = fmt(disp.legit); $("nAtk").textContent = fmt(disp.atk); $("nDel").textContent = fmt(disp.del);
+
+    // spawn particles
+    const f = reduced ? .35 : 1;
+    spawnL += Math.min(26, t.legit/3.2) * dt * f;
+    spawnA += Math.min(230, t.attack/45) * dt * f;
+    const atkPass = t.attack > 0 ? clamp(t.attack_delivered / t.attack, 0, 1) : 1;
+    const legitPass = t.legit > 0 ? clamp(t.legit_delivered / t.legit, 0, 1) : 1;
+    while(spawnL >= 1){ spawnL--; spawn("legit", Math.random() > legitPass); }
+    while(spawnA >= 1){ spawnA--; spawn("atk", Math.random() > atkPass); }
+
+    // periodic telemetry pulse (switch -> controller)
+    statsClock += dt; if(statsClock > 1.1){ statsClock = 0; pulses.push({dir:"up", t:0, kind:"stats"}); }
+  }
+  update(dt);
+  draw(now/1000);
+  requestAnimationFrame(frame);
+}
+
+function update(dt){
+  for(let i=particles.length-1;i>=0;i--){
+    const p = particles[i]; const before = p.d; p.d += p.spd*dt;
+    if(p.block && before < p.gateD && p.d >= p.gateD){
+      const g = pointAt({pts:p.pts, d:p.gateD});
+      for(let k=0;k<4;k++) sparks.push({x:g.x, y:g.y+p.jy, vx:-60-Math.random()*90, vy:(Math.random()-.5)*160, life:.35, kind:p.kind});
+      particles.splice(i,1); continue;
+    }
+    if(p.d >= p.L){
+      if(p.kind==="atk" && S && S.server.status!=="down") shake = Math.min(1, shake + .02);
+      particles.splice(i,1);
+    }
+  }
+  if(particles.length > 1400) particles.splice(0, particles.length-1400);
+  for(let i=sparks.length-1;i>=0;i--){ const s = sparks[i]; s.life -= dt; s.x += s.vx*dt; s.y += s.vy*dt; if(s.life<=0) sparks.splice(i,1); }
+  for(let i=pulses.length-1;i>=0;i--){ pulses[i].t += dt*1.4; if(pulses[i].t > 1) pulses.splice(i,1); }
+  shake *= Math.pow(.02, dt);
+}
+
+function roundRect(c,x,y,w,h,r){ c.beginPath(); c.moveTo(x+r,y); c.arcTo(x+w,y,x+w,y+h,r); c.arcTo(x+w,y+h,x,y+h,r); c.arcTo(x,y+h,x,y,r); c.arcTo(x,y,x+w,y,r); c.closePath(); }
+
+function draw(time){
+  const c = nctx, sc = net.width / W;
+  c.setTransform(sc,0,0,sc,0,0);
+  c.clearRect(0,0,W,H);
+
+  // background grid
+  const g = c.createLinearGradient(0,0,0,H); g.addColorStop(0,"#0E1A2E"); g.addColorStop(1,"#13233B");
+  c.fillStyle = g; c.fillRect(0,0,W,H);
+  c.strokeStyle = "rgba(120,150,190,.07)"; c.lineWidth = 1;
+  for(let x=0;x<W;x+=40){ c.beginPath(); c.moveTo(x,0); c.lineTo(x,H); c.stroke(); }
+  for(let y=0;y<H;y+=40){ c.beginPath(); c.moveTo(0,y); c.lineTo(W,y); c.stroke(); }
+
+  const ph = S ? S.phase : "normal", ml = S ? S.ml : null;
+  const attackOn = S && (S.attack_on || S.traffic.attack > 50);
+  const blockedFrac = S ? S.mitigation.blocked_frac : 0;
+  const status = S ? S.server.status : "online";
+
+  // links
+  c.lineWidth = 2; c.strokeStyle = "rgba(110,140,180,.30)";
+  for(const [a,b] of [[SRC_USER,SW_IN_USER],[SRC_BOT,SW_IN_BOT]]){ c.beginPath(); c.moveTo(a.x,a.y); c.lineTo(b.x,b.y); c.stroke(); }
+  c.beginPath(); c.moveTo(N.sw.x+N.sw.w/2, 300); c.lineTo(SRV_IN.x, 300); c.stroke();
+  c.setLineDash([5,6]); c.strokeStyle = "rgba(110,140,180,.45)";
+  c.beginPath(); c.moveTo(N.sw.x, N.sw.y-N.sw.h/2); c.lineTo(N.ctl.x, N.ctl.y+N.ctl.h/2); c.stroke(); c.setLineDash([]);
+
+  // particles (additive glow)
+  c.globalCompositeOperation = "lighter";
+  for(const p of particles){
+    const q = pointAt(p);
+    const col = p.kind==="legit" ? "77,163,255" : "255,75,75";
+    c.fillStyle = "rgba("+col+",.9)"; c.beginPath(); c.arc(q.x, q.y, p.kind==="legit"?3.2:2.3, 0, 6.283); c.fill();
+    c.fillStyle = "rgba("+col+",.18)"; c.beginPath(); c.arc(q.x, q.y, p.kind==="legit"?7:5, 0, 6.283); c.fill();
+  }
+  c.globalCompositeOperation = "source-over";
+  for(const s of sparks){ c.strokeStyle = "rgba(255,120,120,"+(s.life/.35).toFixed(2)+")"; c.lineWidth = 1.6; c.beginPath(); c.moveTo(s.x,s.y); c.lineTo(s.x-s.vx*.04, s.y-s.vy*.04); c.stroke(); }
+
+  // users
+  c.fillStyle = "#9FB2CC"; c.font = "600 14px 'Source Sans 3',system-ui,sans-serif"; c.textAlign = "center";
+  c.fillText("Real users", 120, 466);
+  for(const u of N.users){
+    c.fillStyle = "#4DA3FF"; c.beginPath(); c.arc(u.x,u.y,8,0,6.283); c.fill();
+    c.fillStyle = "#0E1A2E"; c.beginPath(); c.arc(u.x,u.y-2,2.6,0,6.283); c.fill(); c.fillRect(u.x-4.5,u.y+1.5,9,3.5);
+  }
+
+  // botnet
+  const nBlocked = Math.round(blockedFrac*N.bots.length);
+  c.fillStyle = "#9FB2CC"; c.fillText("Botnet · " + (S?S.traffic.bots:600) + " hosts", 120, 208);
+  N.bots.forEach((b,i) => {
+    const dead = i < nBlocked;
+    if(dead){ c.strokeStyle = "#51607A"; c.lineWidth = 1.6; c.beginPath(); c.arc(b.x,b.y,5,0,6.283); c.stroke();
+      c.beginPath(); c.moveTo(b.x-3,b.y-3); c.lineTo(b.x+3,b.y+3); c.moveTo(b.x+3,b.y-3); c.lineTo(b.x-3,b.y+3); c.stroke(); }
+    else if(attackOn){ const fl = .65 + .35*Math.sin(time*9 + b.ph); c.fillStyle = "rgba(255,75,75,"+fl.toFixed(2)+")"; c.beginPath(); c.arc(b.x,b.y,5.2,0,6.283); c.fill(); }
+    else { c.fillStyle = "#3A4A66"; c.beginPath(); c.arc(b.x,b.y,5,0,6.283); c.fill(); }
+  });
+
+  // controller
+  const ctlCol = !ml ? "#4DA3FF" : ml.alert ? (S.auto_mitigation && (ph==="protected"||ph==="recovering") ? "#3DDC97" : S.auto_mitigation && ph==="mitigating" ? "#F5B400" : "#FF4B4B") : "#4DA3FF";
+  const flash = ml && ml.alert && (ph==="detected") ? (.5+.5*Math.sin(time*10)) : 0;
+  c.save(); c.shadowColor = ctlCol; c.shadowBlur = 18 + flash*26;
+  roundRect(c, N.ctl.x-N.ctl.w/2, N.ctl.y-N.ctl.h/2, N.ctl.w, N.ctl.h, 14); c.fillStyle = "#14263F"; c.fill();
+  c.lineWidth = 2.5; c.strokeStyle = ctlCol; c.stroke(); c.restore();
+  c.fillStyle = "#fff"; c.font = "700 15px Archivo,system-ui,sans-serif"; c.textAlign = "center";
+  c.fillText("Ryu controller + ML model", N.ctl.x, N.ctl.y-6);
+  c.font = "500 13px 'Source Sans 3',sans-serif"; c.fillStyle = ctlCol;
+  const stTxt = !ml ? "connecting…" : ml.alert ? (!S.auto_mitigation ? "ATTACK DETECTED · no defence active" : ph==="detected" ? "ATTACK DETECTED" : ph==="mitigating" ? "deploying defences" : ph==="recovering" ? "attack over · confirming" : "defences holding") : "watching traffic";
+  c.fillText(stTxt, N.ctl.x, N.ctl.y+14);
+  c.font = "500 12px 'Source Sans 3',sans-serif"; c.fillStyle = "#8FA3BF";
+  c.fillText("P(attack) " + (ml ? Math.round(ml.p_attack*100) : 0) + "%", N.ctl.x, N.ctl.y+30);
+
+  // switch
+  const sw = N.sw;
+  c.save(); c.shadowColor = "rgba(77,163,255,.35)"; c.shadowBlur = 16;
+  roundRect(c, sw.x-sw.w/2, sw.y-sw.h/2, sw.w, sw.h, 14); c.fillStyle = "#1B3050"; c.fill(); c.restore();
+  c.lineWidth = 2; c.strokeStyle = "#5B7CA8"; roundRect(c, sw.x-sw.w/2, sw.y-sw.h/2, sw.w, sw.h, 14); c.stroke();
+  c.fillStyle = "#fff"; c.font = "700 16px Archivo,sans-serif"; c.fillText("Switch s1", sw.x, sw.y-8);
+  c.font = "500 12.5px 'Source Sans 3',sans-serif"; c.fillStyle = "#9FB2CC"; c.fillText("OpenFlow", sw.x, sw.y+10);
+  // port LEDs
+  for(let i=0;i<6;i++){ const on = particles.length>20 && ((time*8+i)%6)<3; c.fillStyle = on ? "#4DA3FF" : "#2B4166"; c.fillRect(sw.x-30+i*11, sw.y+26, 7, 7); }
+
+  // gate (filter)
+  const gx = N.gate.x, gTop = 200, gBot = 400;
+  const gateOn = S && S.mitigation.stages[0].active;
+  c.lineWidth = 3; c.lineCap = "round";
+  c.strokeStyle = gateOn ? "#3DDC97" : "rgba(110,140,180,.35)";
+  c.setLineDash(gateOn ? [] : [3,7]);
+  c.beginPath(); c.moveTo(gx,gTop); c.lineTo(gx,gBot); c.stroke(); c.setLineDash([]);
+  if(gateOn){
+    c.save(); c.globalAlpha = .22; c.fillStyle = "#3DDC97"; c.fillRect(gx-6, gTop, 12, gBot-gTop); c.restore();
+    c.fillStyle = "#3DDC97"; c.font = "600 13px 'Source Sans 3',sans-serif"; c.fillText("Filter on", gx, gTop-26);
+    c.fillStyle = "#8FA3BF"; c.font = "500 12px 'Source Sans 3',sans-serif";
+    const cap = S.mitigation.admission_cap; if(cap) c.fillText("max " + fmt(cap) + "/s", gx, gTop-10);
+  } else { c.fillStyle = "#6F83A0"; c.font = "500 13px 'Source Sans 3',sans-serif"; c.fillText("No filter", gx, gTop-10); }
+
+  // server
+  drawServer(c, time, status);
+
+  // pulses (controller <-> switch)
+  for(const p of pulses){
+    if(p.t < 0) continue;
+    const a = {x:sw.x, y:sw.y-sw.h/2}, b = {x:N.ctl.x, y:N.ctl.y+N.ctl.h/2};
+    const t = p.dir==="up" ? p.t : 1-p.t;
+    const x = a.x+(b.x-a.x)*t, y = a.y+(b.y-a.y)*t;
+    c.fillStyle = p.kind==="cmd" ? "#3DDC97" : p.kind==="alert" ? "#FF4B4B" : "#7FB4FF";
+    c.beginPath(); c.arc(x,y,p.kind==="stats"?3:4.5,0,6.283); c.fill();
+  }
+
+}
+
+function drawServer(c, time, status){
+  const s = N.srv; let ox = 0, oy = 0;
+  if(!reduced && (status==="overloaded")){ ox = (Math.random()-.5)*4*(.4+shake); oy = (Math.random()-.5)*3*(.4+shake); }
+  const x = s.x+ox, y = s.y+oy, w = s.w, h = s.h;
+  const col = {online:"#3DDC97", degraded:"#F5B400", overloaded:"#FF4B4B", down:"#55627A"}[status];
+  c.save(); c.shadowColor = col; c.shadowBlur = status==="down" ? 0 : 22;
+  roundRect(c, x-w/2, y-h/2, w, h, 14); c.fillStyle = status==="down" ? "#101A2A" : "#1B3050"; c.fill(); c.restore();
+  c.lineWidth = 2.5; c.strokeStyle = col; roundRect(c, x-w/2, y-h/2, w, h, 14); c.stroke();
+  // rack slots
+  for(let i=0;i<4;i++){
+    const ry = y-h/2+16+i*30;
+    c.fillStyle = status==="down" ? "#18263A" : "#223A5E"; roundRect(c, x-w/2+12, ry, w-24, 22, 5); c.fill();
+    const blink = status==="down" ? false : (status==="overloaded" ? ((time*14+i*3)%2<1) : ((time*2+i)%3<1.6));
+    c.fillStyle = blink ? col : "#2F456A"; c.beginPath(); c.arc(x-w/2+24, ry+11, 3.4, 0, 6.283); c.fill();
+    c.fillStyle = "#35507A"; c.fillRect(x-w/2+36, ry+9, w-60, 4);
+  }
+  // cpu bar
+  const cpu = S ? S.server.cpu : 0;
+  c.fillStyle = "#0E1A2E"; roundRect(c, x-w/2+12, y+h/2-26, w-24, 10, 5); c.fill();
+  c.fillStyle = col; roundRect(c, x-w/2+12, y+h/2-26, Math.max(6,(w-24)*clamp(cpu,0,100)/100), 10, 5); c.fill();
+  c.textAlign = "center"; c.fillStyle = "#fff"; c.font = "700 16px Archivo,sans-serif"; c.fillText("Web server", x, y+h/2+28);
+  c.font = "600 13px 'Source Sans 3',sans-serif"; c.fillStyle = col;
+  c.fillText({online:"Online · CPU "+Math.round(cpu)+"%", degraded:"Degraded · CPU "+Math.round(cpu)+"%", overloaded:"Overloaded · CPU "+Math.round(cpu)+"%", down:"DOWN"}[status], x, y+h/2+46);
+  if(status==="down"){
+    c.strokeStyle = "#FF4B4B"; c.lineWidth = 7; c.lineCap = "round";
+    c.beginPath(); c.moveTo(x-30,y-30); c.lineTo(x+30,y+30); c.moveTo(x+30,y-30); c.lineTo(x-30,y+30); c.stroke();
+  }
+}
+
+/* ============================================================== chart */
+const chart = $("chart"), cctx = chart.getContext("2d");
+function drawChart(){
+  if(!S) return;
+  const h = S.history, c = cctx;
+  const cw = chart.clientWidth || 600, ch = chart.clientHeight || 260, dpr = Math.min(2, window.devicePixelRatio || 1);
+  if(chart.width !== Math.round(cw*dpr) || chart.height !== Math.round(ch*dpr)){ chart.width = Math.round(cw*dpr); chart.height = Math.round(ch*dpr); }
+  c.setTransform(dpr,0,0,dpr,0,0); c.clearRect(0,0,cw,ch);
+  const L = 44, R = 10, T = 10, stripH = 46, gap = 16, B = stripH + gap + 16;
+  const pw = cw-L-R, ph = ch-T-B;
+  const MAXN = 160, step = pw/(MAXN-1);
+  const ymin = 1, ymax = Math.log10(40000);
+  const Y = v => T + ph - (clamp(Math.log10(Math.max(v,10)), ymin, ymax)-ymin)/(ymax-ymin)*ph;
+  const X = i => L + i*step;
+
+  c.font = "12px 'Source Sans 3',sans-serif"; c.textAlign = "right"; c.textBaseline = "middle";
+  for(const v of [10,100,1000,10000]){
+    c.strokeStyle = "#E3E9F0"; c.lineWidth = 1; c.beginPath(); c.moveTo(L,Y(v)); c.lineTo(L+pw,Y(v)); c.stroke();
+    c.fillStyle = "#5A6A80"; c.fillText(v>=1000 ? (v/1000)+"k" : v, L-8, Y(v));
+  }
+  if(!h.length) return;
+
+  // capacity
+  const capY = Y(S.server.capacity);
+  c.setLineDash([6,5]); c.strokeStyle = "#C98200"; c.lineWidth = 1.6; c.beginPath(); c.moveTo(L,capY); c.lineTo(L+pw,capY); c.stroke(); c.setLineDash([]);
+  c.textAlign = "left"; c.fillStyle = "#8A5A00"; c.fillText("Server capacity " + fmt(S.server.capacity) + "/s", L+6, capY-9);
+
+  // incoming area + line
+  const grad = c.createLinearGradient(0,T,0,T+ph); grad.addColorStop(0,"rgba(229,56,59,.30)"); grad.addColorStop(1,"rgba(229,56,59,.02)");
+  c.beginPath(); h.forEach((p,i) => i ? c.lineTo(X(i),Y(p.incoming)) : c.moveTo(X(i),Y(p.incoming)));
+  c.lineTo(X(h.length-1),T+ph); c.lineTo(X(0),T+ph); c.closePath(); c.fillStyle = grad; c.fill();
+  c.beginPath(); h.forEach((p,i) => i ? c.lineTo(X(i),Y(p.incoming)) : c.moveTo(X(i),Y(p.incoming)));
+  c.strokeStyle = "#E5383B"; c.lineWidth = 2; c.lineJoin = "round"; c.stroke();
+  // delivered
+  c.beginPath(); h.forEach((p,i) => i ? c.lineTo(X(i),Y(p.delivered)) : c.moveTo(X(i),Y(p.delivered)));
+  c.strokeStyle = "#2F7BF6"; c.lineWidth = 2.6; c.stroke();
+
+  // alert markers
+  c.textAlign = "left";
+  for(let i=1;i<h.length;i++){
+    if(h[i].alert && !h[i-1].alert){
+      c.strokeStyle = "#14213D"; c.lineWidth = 1.5; c.setLineDash([3,4]); c.beginPath(); c.moveTo(X(i),T); c.lineTo(X(i),T+ph+gap+stripH); c.stroke(); c.setLineDash([]);
+      c.fillStyle = "#14213D"; c.font = "600 12px 'Source Sans 3',sans-serif";
+      const lab = "ML alert"; const tx = X(i) + 6 + 60 > L+pw ? X(i)-62 : X(i)+6; c.fillText(lab, tx, T+8);
+    }
+    if(!h[i].alert && h[i-1].alert){
+      c.strokeStyle = "#14915F"; c.lineWidth = 1.5; c.setLineDash([3,4]); c.beginPath(); c.moveTo(X(i),T); c.lineTo(X(i),T+ph+gap+stripH); c.stroke(); c.setLineDash([]);
+      c.fillStyle = "#14915F"; c.font = "600 12px 'Source Sans 3',sans-serif"; c.fillText("All clear", X(i)+6, T+8);
+    }
+  }
+
+  // probability strip
+  const sy = T+ph+gap, sh = stripH;
+  c.fillStyle = "#F3F6F9"; c.fillRect(L,sy,pw,sh);
+  const PY = p => sy + sh - p*sh;
+  c.beginPath(); h.forEach((p,i) => i ? c.lineTo(X(i),PY(p.p)) : c.moveTo(X(i),PY(p.p)));
+  c.lineTo(X(h.length-1),sy+sh); c.lineTo(X(0),sy+sh); c.closePath(); c.fillStyle = "rgba(20,33,61,.12)"; c.fill();
+  c.beginPath(); h.forEach((p,i) => i ? c.lineTo(X(i),PY(p.p)) : c.moveTo(X(i),PY(p.p)));
+  c.strokeStyle = "#14213D"; c.lineWidth = 2; c.stroke();
+  c.setLineDash([4,4]); c.strokeStyle = "#E5383B"; c.lineWidth = 1.2; c.beginPath(); c.moveTo(L,PY(.5)); c.lineTo(L+pw,PY(.5)); c.stroke(); c.setLineDash([]);
+  c.textAlign = "right"; c.fillStyle = "#5A6A80"; c.font = "12px 'Source Sans 3',sans-serif";
+  c.fillText("100%", L-8, sy+6); c.fillText("0%", L-8, sy+sh-4); c.fillStyle = "#A5171A"; c.fillText("50%", L-8, PY(.5));
+  c.textAlign = "left"; c.fillStyle = "#5A6A80"; c.fillText("ML attack probability", L+6, sy+sh+12);
+}
+window.addEventListener("resize", drawChart);
+
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
